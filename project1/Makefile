@@ -1,5 +1,5 @@
 CC=g++
 
 all:
-	$(CC) -g server.cpp -o ./ras/server
-	$(CC) -g client.c -o client
+	$(CC) -g server.cpp -o ./ras/server.o
+	$(CC) -g client.c -o client.o
