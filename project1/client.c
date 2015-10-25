@@ -85,8 +85,8 @@ int main(int argc,char *argv[])
   	msg_buf[len] = 10;
   	
   	msg_buf[len+1] = '\0';
- 	printf("%s",msg_buf);
-  	fflush(stdout);
+ 	//printf("%s",msg_buf);
+  	//fflush(stdout);
   	if(write(client_fd,msg_buf,len+1) == -1) return -1;
 
 	/*if(!strncmp(msg_buf,"exit",4))

@@ -14,6 +14,7 @@
 #include <netdb.h>
 #include <fcntl.h>
 #include <string>
+#include <fstream>
 #define MAXLINE 15000
 #define LISTENNQ 10
 using namespace std;
@@ -143,15 +144,13 @@ void do_cmd(char *cmd, char **argv, string *ret_msg, bool next_is_pipe, int stdi
 
 string handle_cmd(char* cmd)
 {
-	char *next_tok = strtok(cmd," \r\n");
-	char *tok_cmd = next_tok;
-	//next_tok = strtok(NULL," \r\n");
-	string ret_msg ("");
-	int argc = 0;
-	char **argv;
-	bool next_is_pipe = false;
-	int stdin_copy = dup(0);	// copy origin stdin
-	int pipe_in = stdin_copy;
+	char *next_tok = strtok(cmd," \r\n");	// always be next token of cmd token 
+	char *tok_cmd = next_tok;				// record cmd token ex: ls, cat, number
+	string ret_msg ("");					// return message
+	int argc = 0;							// the argc of cmd
+	char **argv;							// the argv of cmd
+	bool next_is_pipe = false;				// whether cmd next is pipe
+	int stdin_copy = dup(0);				// copy origin stdin
 
 	while(tok_cmd != NULL)
 	{
@@ -184,7 +183,7 @@ string handle_cmd(char* cmd)
 		else if(strcmp(tok_cmd,"ls") == 0 || strcmp(tok_cmd,"cat") == 0 || strcmp(tok_cmd,"number") == 0 || strcmp(tok_cmd,"removetag") == 0 || strcmp(tok_cmd,"removetag0") == 0 || strcmp(tok_cmd,"noop") == 0)
 		{
 			handle_arg(&argc,&argv,tok_cmd,&next_tok);
-			if(next_tok != NULL && strcmp(next_tok,"|") == 0)
+			if(next_tok != NULL && (strcmp(next_tok,"|") == 0 || strcmp(next_tok,">") == 0))
 				next_is_pipe = true;
 			else
 				next_is_pipe = false;
@@ -193,6 +192,27 @@ string handle_cmd(char* cmd)
 		}
 		else if(strcmp(tok_cmd,"|") == 0)
 		{
+		}
+		else if(strcmp(tok_cmd,">") == 0)
+		{
+			// next token is ">" filename
+			if(next_tok != NULL)
+			{
+				ofstream output_file;
+				char *filename = next_tok;
+				output_file.open(filename,ofstream::out);
+				char tmp[1024];
+				int n;
+				string file_msg;
+				while((n = read(fileno(stdin),tmp,1024)) > 0)
+				{
+					tmp[n] = 0;
+					file_msg.append(tmp);
+				}
+				output_file << file_msg;
+				output_file.close();
+				next_tok = strtok(NULL," \r\n");
+			}
 		}
 		else
 		{
