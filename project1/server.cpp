@@ -35,7 +35,7 @@ void sig_chld(int signo)
 // find end of one cmd
 bool is_end_of_cmd(char *tok)
 {
-	if(tok == NULL || strcmp(tok,"|") == 0 || strcmp(&tok[0],"|") == 0 || strcmp(&tok[0],"!") == 0 || strcmp(tok,">") == 0)
+	if(tok == NULL || strcmp(tok,"|") == 0 || strcmp(tok,">") == 0 || strcmp(&tok[0],"|") == 0 || strcmp(&tok[0],"!") == 0)
 		return true;
 	else
 		return false;
@@ -57,26 +57,28 @@ void handle_arg(int *argc, char ***argv, char *cmd, char **tok)
 		tmp_c = tmp_n;
 		*tok = strtok(NULL," \r\n");
 	}
-	//cout << *argc << endl;
-	*argv = (char **)malloc(*argc+2);
+	// argv include cmd, arg of cmd, NULL
+	//cout << *argc+2 << endl; // use for debug
+	*argv = (char **)malloc(*argc+1);
 	(*argv)[0] = (char *)malloc(sizeof(cmd));
 	strcpy((*argv)[0],cmd);
-	//cout << (*argv)[0] << endl;
+	//cout << (*argv)[0] << endl; // use for debug
 	tmp_c = head;
 	for(int i=1;i<*argc+1;i++)
 	{
 		arg_list *tmp_n = tmp_c->next;
 		(*argv)[i] = (char *)malloc(sizeof(tmp_c->arg));
 		strcpy((*argv)[i],tmp_c->arg);
-		//cout << (*argv)[i] << endl;
+		//cout << (*argv)[i] << endl; // use for debug
 		free(tmp_c);
 		tmp_c = tmp_n;
 	}
+	// to handle multiple argv, the last must be NULL
 	(*argv)[*argc+1] = NULL;
 }
 
 // exec the cmd
-void do_cmd(char *cmd, char **argv, string *ret_msg)
+void do_cmd(char *cmd, char **argv, string *ret_msg, bool next_is_pipe, int stdin_copy)
 {
 	int pipe1[2];
 	if(pipe(pipe1) < 0)
@@ -88,6 +90,8 @@ void do_cmd(char *cmd, char **argv, string *ret_msg)
 	int child_pid = fork();
 	if(child_pid == 0)				// child process write
 	{
+		//cout << cmd << endl;		// use for debug
+		//cout << "child pid: " << getpid() << endl; // use for debug
 		int stdout_copy = dup(1);	// copy origin stdout
 		close(1);					// close stdout
 		close(2);					// close stderr
@@ -106,7 +110,7 @@ void do_cmd(char *cmd, char **argv, string *ret_msg)
 	}
 	else if(child_pid > 0)			//parent process read
 	{
-		int stdin_copy = dup(0);	// copy origin stdin
+		//cout << "my pid: " << getpid() << endl; // use for debug
 		close(0);					// close stdin
 		close(pipe1[1]);			// close pipe write
 		dup(pipe1[0]);				// dup pipe read to fileno(stdin)
@@ -114,6 +118,9 @@ void do_cmd(char *cmd, char **argv, string *ret_msg)
 		pid_t pid;
 		int stat;
 		while((pid = wait(&stat)) != child_pid); // block
+		//cout << "The cmd pid: " << pid << " connection terminated\n" << endl; // use for debug
+		if(next_is_pipe)
+			return;
 		char tmp[1024];
 		int n;
 		while((n = read(fileno(stdin),tmp,1024)) > 0)
@@ -122,9 +129,9 @@ void do_cmd(char *cmd, char **argv, string *ret_msg)
 			(*ret_msg).append(tmp);
 		}
 		//back to origin stdin
-		close(1);
+		close(0);
 		dup2(stdin_copy,0);
-		//cout << *ret_msg << endl;
+		//cout << *ret_msg << endl; // use for debug
 		return;
 	}
 	else							// fork fail
@@ -138,13 +145,17 @@ string handle_cmd(char* cmd)
 {
 	char *next_tok = strtok(cmd," \r\n");
 	char *tok_cmd = next_tok;
-	next_tok = strtok(NULL," \r\n");
+	//next_tok = strtok(NULL," \r\n");
 	string ret_msg ("");
-	int arg_c = 0;
-	char **arg_v;
-	
+	int argc = 0;
+	char **argv;
+	bool next_is_pipe = false;
+	int stdin_copy = dup(0);	// copy origin stdin
+	int pipe_in = stdin_copy;
+
 	while(tok_cmd != NULL)
 	{
+		next_tok = strtok(NULL," \r\n");
 		if(strcmp(tok_cmd,"exit") == 0)
 		{
 			ret_msg = "exit";
@@ -172,19 +183,17 @@ string handle_cmd(char* cmd)
 		}
 		else if(strcmp(tok_cmd,"ls") == 0 || strcmp(tok_cmd,"cat") == 0 || strcmp(tok_cmd,"number") == 0 || strcmp(tok_cmd,"removetag") == 0 || strcmp(tok_cmd,"removetag0") == 0 || strcmp(tok_cmd,"noop") == 0)
 		{
-			handle_arg(&arg_c,&arg_v,tok_cmd,&next_tok);
-			do_cmd(cmd,arg_v,&ret_msg);
+			handle_arg(&argc,&argv,tok_cmd,&next_tok);
+			if(next_tok != NULL && strcmp(next_tok,"|") == 0)
+				next_is_pipe = true;
+			else
+				next_is_pipe = false;
+			do_cmd(tok_cmd,argv,&ret_msg,next_is_pipe,stdin_copy);
+			argc = 0;
 		}
-		/*else if(strcmp(tok_cmd,"cat") == 0)
-		{}
-		else if(strcmp(tok_cmd,"number") == 0)
-		{}
-		else if(strcmp(tok_cmd,"removetag") == 0)
-		{}
-		else if(strcmp(tok_cmd,"removetag0") == 0)
-		{}
-		else if(strcmp(tok_cmd,"noop") == 0)
-		{}*/
+		else if(strcmp(tok_cmd,"|") == 0)
+		{
+		}
 		else
 		{
 			string unknown_cmd = tok_cmd;
@@ -198,10 +207,7 @@ string handle_cmd(char* cmd)
 
 int main(int argc, char *argv[], char *envp[])
 {
-	/* env variable test */
-	/*for(int i=0;envp[i]!=(char *)0;i++)
-		cout << envp[i] << endl;*/
-	//cout << getenv("path") << endl;
+	// initialize env PATH
 	setenv("PATH","bin:.",1);
 	
 	int listenfd, connfd, n;
