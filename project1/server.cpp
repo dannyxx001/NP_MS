@@ -24,6 +24,13 @@ typedef struct arg_list{
 	arg_list *next;
 }arg_list;
 
+typedef struct pipe_list{
+	int my_pipe[2];
+	int counter;
+	pipe_list *prev;
+	pipe_list *next;
+}pipe_list;
+
 void sig_chld(int signo)
 {
 	pid_t pid;
@@ -36,7 +43,8 @@ void sig_chld(int signo)
 // find end of one cmd
 bool is_end_of_cmd(char *tok)
 {
-	if(tok == NULL || strcmp(tok,"|") == 0 || strcmp(tok,">") == 0 || strcmp(&tok[0],"|") == 0 || strcmp(&tok[0],"!") == 0)
+	// character use '', string use ""
+	if(tok == NULL || strcmp(tok,"|") == 0 || strcmp(tok,">") == 0 || tok[0] == '|' || tok[0] == '!')
 		return true;
 	else
 		return false;
@@ -79,7 +87,7 @@ void handle_arg(int *argc, char ***argv, char *cmd, char **tok)
 }
 
 // exec the cmd
-void do_cmd(char *cmd, char **argv, string *ret_msg, bool next_is_pipe, int stdin_copy)
+void do_cmd(char *cmd, char **argv, string *ret_msg, char *next_tok, int stdin_copy)
 {
 	int pipe1[2];
 	if(pipe(pipe1) < 0)
@@ -120,7 +128,7 @@ void do_cmd(char *cmd, char **argv, string *ret_msg, bool next_is_pipe, int stdi
 		int stat;
 		while((pid = wait(&stat)) != child_pid); // block
 		//cout << "The cmd pid: " << pid << " connection terminated\n" << endl; // use for debug
-		if(next_is_pipe)
+		if(next_tok != NULL && (strcmp(next_tok,"|") == 0 || strcmp(next_tok,">") == 0))
 			return;
 		char tmp[1024];
 		int n;
@@ -183,16 +191,15 @@ string handle_cmd(char* cmd)
 		else if(strcmp(tok_cmd,"ls") == 0 || strcmp(tok_cmd,"cat") == 0 || strcmp(tok_cmd,"number") == 0 || strcmp(tok_cmd,"removetag") == 0 || strcmp(tok_cmd,"removetag0") == 0 || strcmp(tok_cmd,"noop") == 0)
 		{
 			handle_arg(&argc,&argv,tok_cmd,&next_tok);
-			if(next_tok != NULL && (strcmp(next_tok,"|") == 0 || strcmp(next_tok,">") == 0))
+			/*if(next_tok != NULL && (strcmp(next_tok,"|") == 0 || strcmp(next_tok,">") == 0))
 				next_is_pipe = true;
 			else
-				next_is_pipe = false;
-			do_cmd(tok_cmd,argv,&ret_msg,next_is_pipe,stdin_copy);
+				next_is_pipe = false;*/
+			do_cmd(tok_cmd,argv,&ret_msg,next_tok,stdin_copy);
 			argc = 0;
 		}
 		else if(strcmp(tok_cmd,"|") == 0)
-		{
-		}
+		{}
 		else if(strcmp(tok_cmd,">") == 0)
 		{
 			// next token is ">" filename
@@ -213,6 +220,17 @@ string handle_cmd(char* cmd)
 				output_file.close();
 				next_tok = strtok(NULL," \r\n");
 			}
+		}
+		else if(tok_cmd[0] == '|')
+		{
+			char *num = strtok(tok_cmd," |\r\n");
+			bool check_num = true;
+			for(int i=0;i<strlen(num);i++)
+				if(!isdigit(num[i]))
+					check_num = false;
+			int number = 0;				
+			if(check_num == true)
+				number = atoi(num);
 		}
 		else
 		{
