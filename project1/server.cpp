@@ -19,11 +19,13 @@
 #define LISTENNQ 10
 using namespace std;
 
+// arg list use for every cmd argv
 typedef struct arg_list{
 	char *arg;
 	arg_list *next;
 }arg_list;
 
+// pipe list use for |N or !N
 typedef struct pipe_list{
 	int my_pipe[2];
 	int counter;
@@ -85,101 +87,27 @@ void handle_arg(int *argc, char ***argv, char *cmd, char **tok)
 	(*argv)[*argc+1] = NULL;
 }
 
-// exec the cmd
-void do_cmd(char *cmd, char **argv, string *ret_msg, char *next_tok, int stdin_copy, pipe_list **head, bool first_time_do_cmd)
+int convert_to_int(char *next_tok)
 {
-	// handle pipe N
-	if(first_time_do_cmd == true && *head != NULL && (*head)->counter == 0)
+	char *num = strtok(next_tok," !|\r\n");
+	bool check_num = true;
+	for(int i=0;i<strlen(num);i++)
+		if(!isdigit(num[i]))
+			check_num = false;
+	int number = 0;
+	if(check_num == true)
 	{
-		close(0);
-		dup((*head)->my_pipe[0]);
+		number = atoi(num);
+		return number;
 	}
-
-	int pipe_out[2];				// use for pipe stdout
-	int pipe_err[2];				// use for pipe stderr
-	if(pipe(pipe_out) < 0 || pipe(pipe_err) < 0)
+	else
 	{
-		cout << "fail to create pipe out or err" << endl;
-		return;
-	}
-
-	int child_pid = fork();
-	if(child_pid == 0)				// child process write
-	{
-		//cout << cmd << endl;		// use for debug
-		//cout << "child pid: " << getpid() << endl; // use for debug
-		int stdout_copy = dup(1);	// copy origin stdout
-		close(1);					// close stdout
-		close(2);					// close stderr
-		close(pipe_out[0]);			// close pipe_out read
-		close(pipe_err[0]);			// close pipe_err read
-		dup(pipe_out[1]);			// dup pipe_out write to fileno(stdout)
-		dup(pipe_err[1]);			// dup pipe_out write to fileno(stderr)
-		close(pipe_out[1]);			// close pipe_out write
-		close(pipe_err[1]);			// close pipe_err write
-		if(execvp(cmd,argv) == -1)	// exec cmd
-		{
-			// back to origin stdout
-			close(1);
-			dup2(stdout_copy,1);	
-			cout << "fail to exec" << endl;
-		}
-		exit(0);
-	}
-	else if(child_pid > 0)			//parent process read
-	{
-		//cout << "my pid: " << getpid() << endl; // use for debug
-		close(pipe_out[1]);			// close pipe_out write
-		close(pipe_err[1]);			// close pipe_err write
-
-		pid_t pid;
-		int stat;
-		while((pid = wait(&stat)) != child_pid); // block
-		//cout << "The cmd pid: " << pid << " connection terminated\n" << endl; // use for debug
-
-		// if next_tok is |N or !N
-		/*if(next_tok != NULL && strcmp(next_tok,"|") != 0 && strcmp(next_tok,">") != 0 && (next_tok[0] == '|' || next_tok[0] =='!'))
-			return;*/
-
-		close(0);					// close stdin
-		dup(pipe_err[0]);			// dup pipe_err read to fileno(stdin)
-		close(pipe_err[0]);			// close pipe_err read
-
-		char tmp[1024];
-		int n;
-		// read from stderr first
-		while((n = read(fileno(stdin),tmp,1024)) > 0)
-		{
-			tmp[n] = 0;
-			(*ret_msg).append(tmp);
-		}
-
-		close(0);					// close stdin
-		dup(pipe_out[0]);			// dup pipe_out read to fileno(stdin)
-		close(pipe_out[0]);			// close pipe_out read
-
-		if(next_tok != NULL && (strcmp(next_tok,"|") == 0 || strcmp(next_tok,">") == 0 || next_tok[0] == '|'))
-			return;
-
-		// read from stdout second
-		while((n = read(fileno(stdin),tmp,1024)) > 0)
-		{
-			tmp[n] = 0;
-			(*ret_msg).append(tmp);
-		}
-		//back to origin stdin
-		close(0);
-		dup2(stdin_copy,0);
-		//cout << *ret_msg << endl; // use for debug
-		return;
-	}
-	else							// fork fail
-	{
-		cout << "fail to fork" << endl;
-		return;
+		cout << "Pipe number error!" << endl;
+		return -1;
 	}
 }
 
+// do |N or !N
 void do_pipe_N(pipe_list **head, int num, int stdin_copy)
 {
 	pipe_list *my_pipe = *head;
@@ -199,7 +127,6 @@ void do_pipe_N(pipe_list **head, int num, int stdin_copy)
 			cout << "fail to create pipe" << endl;
 			return;
 		}
-		//cout << my_pipe->my_pipe[0] << my_pipe->my_pipe[1] << endl; // for debug
 		pipe_list *pipe_c = *head;
 		if(pipe_c == NULL)									// the first one
 			*head = my_pipe;
@@ -251,12 +178,12 @@ void do_pipe_N(pipe_list **head, int num, int stdin_copy)
 			tmp[n] = 0;
 			msg.append(tmp);
 		}
+		close(my_pipe->my_pipe[0]);								// close previous pipe read
 		while((n = read(fileno(stdin),tmp,1024)) > 0)			// read from stdin second
 		{
 			tmp[n] = 0;
 			msg.append(tmp);
 		}
-		close(my_pipe->my_pipe[0]);								// close previous pipe read
 		if(pipe(my_pipe->my_pipe) < 0)							// create new pipe
 		{
 			cout << "fail to create pipe" << endl;
@@ -269,6 +196,219 @@ void do_pipe_N(pipe_list **head, int num, int stdin_copy)
 		dup2(stdin_copy,0);
 	}
 	return;
+}
+
+// exec the cmd
+void do_cmd(char *cmd, char **argv, string *ret_msg, char **next_tok, int stdin_copy, pipe_list **head, bool first_time_do_cmd)
+{
+	// handle pipe N
+	if(first_time_do_cmd == true && *head != NULL && (*head)->counter == 0)
+	{
+		close(0);
+		dup((*head)->my_pipe[0]);
+	}
+
+	int pipe_out[2];				// use for pipe stdout
+	int pipe_err[2];				// use for pipe stderr
+	if(pipe(pipe_out) < 0 || pipe(pipe_err) < 0)
+	{
+		cout << "fail to create pipe out or err" << endl;
+		return;
+	}
+
+	int child_pid = fork();
+	if(child_pid == 0)				// child process write
+	{
+		//cout << cmd << endl;		// use for debug
+		//cout << "child pid: " << getpid() << endl; // use for debug
+		int stdout_copy = dup(1);	// copy origin stdout
+		close(1);					// close stdout
+		close(2);					// close stderr
+		close(pipe_out[0]);			// close pipe_out read
+		close(pipe_err[0]);			// close pipe_err read
+		dup(pipe_out[1]);			// dup pipe_out write to fileno(stdout)
+		dup(pipe_err[1]);			// dup pipe_out write to fileno(stderr)
+		close(pipe_out[1]);			// close pipe_out write
+		close(pipe_err[1]);			// close pipe_err write
+		if(execvp(cmd,argv) == -1)	// exec cmd
+		{
+			string unknown_cmd = cmd;
+			string msg = "Unknown command: [" + unknown_cmd + "].\n";
+			write(fileno(stdout),msg.c_str(),msg.length());
+			// back to origin stdout
+			close(1);
+			dup2(stdout_copy,1);	
+			cout << "fail to exec" << endl;
+		}
+		exit(0);
+	}
+	else if(child_pid > 0)			//parent process read
+	{
+		//cout << "my pid: " << getpid() << endl; // use for debug
+		close(pipe_out[1]);			// close pipe_out write
+		close(pipe_err[1]);			// close pipe_err write
+
+		pid_t pid;
+		int stat;
+		while((pid = wait(&stat)) != child_pid); // block
+		//cout << "The cmd pid: " << pid << " connection terminated\n" << endl; // use for debug
+
+		// use flag to record |N and !N
+		// if next_tok is |N or !N
+		if(*next_tok != NULL && strcmp(*next_tok,"|") != 0 && strcmp(*next_tok,">") != 0 && ((*next_tok)[0] == '|' || (*next_tok)[0] =='!'))
+		{
+			int number = 0;
+			if((*next_tok)[0] == '|') // |N
+			{
+				if((number = convert_to_int(*next_tok)) == -1)
+				{	
+					cout << "Pipe number error" << endl;
+					return;
+				}
+				close(0);			// close stdin
+				dup(pipe_out[0]);	// dup pipe_out read to fileno(stdin)
+				close(pipe_out[0]);	// close pipe_out read
+				do_pipe_N(head,number,stdin_copy);
+
+				*next_tok = strtok(NULL," \r\n");
+
+				close(0);			// close stdin
+				dup(pipe_err[0]);	// dup pipe_err read to fileno(stdin)
+				close(pipe_err[0]);	// close pipe_err read
+
+				if(*next_tok != NULL && (*next_tok)[0] =='!') // !N
+				{
+					if((number = convert_to_int(*next_tok)) == -1)
+					{	
+						cout << "Pipe number error" << endl;
+						return;
+					}
+					do_pipe_N(head,number,stdin_copy);
+				}
+				else				// output stderr
+				{
+					char tmp[1024];
+					int n;
+					// read from stdin
+					while((n = read(fileno(stdin),tmp,1024)) > 0)
+					{
+						tmp[n] = 0;
+						(*ret_msg).append(tmp);
+					}
+				}
+			}
+			else
+			{	
+				if((number = convert_to_int(*next_tok)) == -1)
+				{	
+					cout << "Pipe number error" << endl;
+					return;
+				}
+				close(0);			// close stdin
+				dup(pipe_err[0]);	// dup pipe_err read to fileno(stdin)
+				close(pipe_err[0]);	// close pipe_err read
+				do_pipe_N(head,number,stdin_copy);
+
+				*next_tok = strtok(NULL," \r\n");
+				
+				close(0);			// close stdin
+				dup(pipe_out[0]);	// dup pipe_out read to fileno(stdin)
+				close(pipe_out[0]);	// close pipe_out read
+
+				if(*next_tok != NULL && (*next_tok)[0] =='|')
+				{
+					if((number = convert_to_int(*next_tok)) == -1)
+					{	
+						cout << "Pipe number error" << endl;
+						return;
+					}
+					do_pipe_N(head,number,stdin_copy);
+				}
+				else				// output stdout
+				{
+					char tmp[1024];
+					int n;
+					// read from stdin
+					while((n = read(fileno(stdin),tmp,1024)) > 0)
+					{
+						tmp[n] = 0;
+						(*ret_msg).append(tmp);
+					}
+				}
+			}
+			return;
+		}
+
+		close(0);					// close stdin
+		dup(pipe_err[0]);			// dup pipe_err read to fileno(stdin)
+		close(pipe_err[0]);			// close pipe_err read
+
+		char tmp[1024];
+		int n;
+		// read from stderr first
+		while((n = read(fileno(stdin),tmp,1024)) > 0)
+		{
+			tmp[n] = 0;
+			(*ret_msg).append(tmp);
+		}
+
+		close(0);					// close stdin
+		dup(pipe_out[0]);			// dup pipe_out read to fileno(stdin)
+		close(pipe_out[0]);			// close pipe_out read
+
+		// pipe to next cmd
+		if(*next_tok != NULL && strcmp(*next_tok,"|") == 0)
+		{
+			*next_tok = strtok(NULL," \r\n");
+			return;
+		}
+
+		// output to a file
+		if(*next_tok != NULL && strcmp(*next_tok,">") == 0)
+		{
+			*next_tok = strtok(NULL," \r\n");
+			// next token is ">" filename
+			if(*next_tok != NULL)
+			{
+				ofstream output_file;
+				char *filename = *next_tok;
+				output_file.open(filename,ofstream::out);
+				char tmp[1024];
+				int n;
+				string file_msg;
+				while((n = read(fileno(stdin),tmp,1024)) > 0)
+				{
+					tmp[n] = 0;
+					file_msg.append(tmp);
+				}
+				output_file << file_msg;
+				output_file.close();
+				*next_tok = strtok(NULL," \r\n");
+			}
+			else
+			{
+				cout << "No filename!" << endl;
+			}
+			return;
+		}
+
+		// read from stdout second
+		while((n = read(fileno(stdin),tmp,1024)) > 0)
+		{
+			tmp[n] = 0;
+			(*ret_msg).append(tmp);
+		}
+		//back to origin stdin
+		close(0);
+		dup2(stdin_copy,0);
+		//cout << *ret_msg << endl; // use for debug
+		return;
+	}
+	else							// fork fail
+	{
+		cout << "fail to fork" << endl;
+		return;
+	}
 }
 
 void all_list_add_or_sub(pipe_list **head, bool check)
@@ -327,56 +467,9 @@ string handle_cmd(char* cmd, pipe_list **head)
 		else if(strcmp(tok_cmd,"ls") == 0 || strcmp(tok_cmd,"cat") == 0 || strcmp(tok_cmd,"number") == 0 || strcmp(tok_cmd,"removetag") == 0 || strcmp(tok_cmd,"removetag0") == 0 || strcmp(tok_cmd,"noop") == 0)
 		{
 			handle_arg(&argc,&argv,tok_cmd,&next_tok);
-			do_cmd(tok_cmd,argv,&ret_msg,next_tok,stdin_copy,head,first_time_do_cmd);
+			do_cmd(tok_cmd,argv,&ret_msg,&next_tok,stdin_copy,head,first_time_do_cmd);
 			argc = 0;
 			first_time_do_cmd = false;
-		}
-		else if(strcmp(tok_cmd,"|") == 0)
-		{}
-		else if(strcmp(tok_cmd,">") == 0)
-		{
-			// next token is ">" filename
-			if(next_tok != NULL)
-			{
-				ofstream output_file;
-				char *filename = next_tok;
-				output_file.open(filename,ofstream::out);
-				char tmp[1024];
-				int n;
-				string file_msg;
-				while((n = read(fileno(stdin),tmp,1024)) > 0)
-				{
-					tmp[n] = 0;
-					file_msg.append(tmp);
-				}
-				output_file << file_msg;
-				output_file.close();
-				next_tok = strtok(NULL," \r\n");
-			}
-		}
-		else if(tok_cmd[0] == '|')
-		{
-			char *num = strtok(tok_cmd," |\r\n");
-			bool check_num = true;
-			for(int i=0;i<strlen(num);i++)
-				if(!isdigit(num[i]))
-					check_num = false;
-			int number = 0;				
-			if(check_num == true)
-				number = atoi(num);
-			else
-			{
-				cout << "Pipe number error!" << endl;
-				break;
-			}
-			do_pipe_N(head,number,stdin_copy);
-			// for debug
-			/*pipe_list *tmp = *head;
-			while(tmp != NULL)
-			{
-				cout << tmp->counter << endl;
-				tmp = tmp->next;
-			}*/
 		}
 		else
 		{

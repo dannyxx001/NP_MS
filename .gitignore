@@ -20,3 +20,6 @@
 *.pdf
 
 *.zip
+
+# txt file
+.txt
