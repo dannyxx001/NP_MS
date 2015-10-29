@@ -27,7 +27,6 @@ typedef struct arg_list{
 typedef struct pipe_list{
 	int my_pipe[2];
 	int counter;
-	pipe_list *prev;
 	pipe_list *next;
 }pipe_list;
 
@@ -87,12 +86,20 @@ void handle_arg(int *argc, char ***argv, char *cmd, char **tok)
 }
 
 // exec the cmd
-void do_cmd(char *cmd, char **argv, string *ret_msg, char *next_tok, int stdin_copy)
+void do_cmd(char *cmd, char **argv, string *ret_msg, char *next_tok, int stdin_copy, pipe_list **head, bool first_time_do_cmd)
 {
-	int pipe1[2];
-	if(pipe(pipe1) < 0)
+	// handle pipe N
+	if(first_time_do_cmd == true && *head != NULL && (*head)->counter == 0)
 	{
-		cout << "fail to create pipe" << endl;
+		close(0);
+		dup((*head)->my_pipe[0]);
+	}
+
+	int pipe_out[2];				// use for pipe stdout
+	int pipe_err[2];				// use for pipe stderr
+	if(pipe(pipe_out) < 0 || pipe(pipe_err) < 0)
+	{
+		cout << "fail to create pipe out or err" << endl;
 		return;
 	}
 
@@ -104,10 +111,12 @@ void do_cmd(char *cmd, char **argv, string *ret_msg, char *next_tok, int stdin_c
 		int stdout_copy = dup(1);	// copy origin stdout
 		close(1);					// close stdout
 		close(2);					// close stderr
-		close(pipe1[0]);			// close pipe read
-		dup(pipe1[1]);				// dup pipe write to fileno(stdout)
-		dup(pipe1[1]);				// dup pipe write to fileno(stderr)
-		close(pipe1[1]);			// close pipe write
+		close(pipe_out[0]);			// close pipe_out read
+		close(pipe_err[0]);			// close pipe_err read
+		dup(pipe_out[1]);			// dup pipe_out write to fileno(stdout)
+		dup(pipe_err[1]);			// dup pipe_out write to fileno(stderr)
+		close(pipe_out[1]);			// close pipe_out write
+		close(pipe_err[1]);			// close pipe_err write
 		if(execvp(cmd,argv) == -1)	// exec cmd
 		{
 			// back to origin stdout
@@ -120,18 +129,39 @@ void do_cmd(char *cmd, char **argv, string *ret_msg, char *next_tok, int stdin_c
 	else if(child_pid > 0)			//parent process read
 	{
 		//cout << "my pid: " << getpid() << endl; // use for debug
-		close(0);					// close stdin
-		close(pipe1[1]);			// close pipe write
-		dup(pipe1[0]);				// dup pipe read to fileno(stdin)
-		close(pipe1[0]);			// close pipe read
+		close(pipe_out[1]);			// close pipe_out write
+		close(pipe_err[1]);			// close pipe_err write
+
 		pid_t pid;
 		int stat;
 		while((pid = wait(&stat)) != child_pid); // block
 		//cout << "The cmd pid: " << pid << " connection terminated\n" << endl; // use for debug
-		if(next_tok != NULL && (strcmp(next_tok,"|") == 0 || strcmp(next_tok,">") == 0))
-			return;
+
+		// if next_tok is |N or !N
+		/*if(next_tok != NULL && strcmp(next_tok,"|") != 0 && strcmp(next_tok,">") != 0 && (next_tok[0] == '|' || next_tok[0] =='!'))
+			return;*/
+
+		close(0);					// close stdin
+		dup(pipe_err[0]);			// dup pipe_err read to fileno(stdin)
+		close(pipe_err[0]);			// close pipe_err read
+
 		char tmp[1024];
 		int n;
+		// read from stderr first
+		while((n = read(fileno(stdin),tmp,1024)) > 0)
+		{
+			tmp[n] = 0;
+			(*ret_msg).append(tmp);
+		}
+
+		close(0);					// close stdin
+		dup(pipe_out[0]);			// dup pipe_out read to fileno(stdin)
+		close(pipe_out[0]);			// close pipe_out read
+
+		if(next_tok != NULL && (strcmp(next_tok,"|") == 0 || strcmp(next_tok,">") == 0 || next_tok[0] == '|'))
+			return;
+
+		// read from stdout second
 		while((n = read(fileno(stdin),tmp,1024)) > 0)
 		{
 			tmp[n] = 0;
@@ -150,15 +180,121 @@ void do_cmd(char *cmd, char **argv, string *ret_msg, char *next_tok, int stdin_c
 	}
 }
 
-string handle_cmd(char* cmd)
+void do_pipe_N(pipe_list **head, int num, int stdin_copy)
+{
+	pipe_list *my_pipe = *head;
+	while(my_pipe != NULL)
+	{
+		if(my_pipe->counter == num)
+			break;
+		my_pipe = my_pipe->next;
+	}
+	if(my_pipe == NULL)										// if the num counter of pipe not exist 
+	{
+		my_pipe = (pipe_list*)malloc(sizeof(pipe_list));
+		my_pipe->counter = num;
+		my_pipe->next = NULL;
+		if(pipe(my_pipe->my_pipe) < 0)
+		{
+			cout << "fail to create pipe" << endl;
+			return;
+		}
+		//cout << my_pipe->my_pipe[0] << my_pipe->my_pipe[1] << endl; // for debug
+		pipe_list *pipe_c = *head;
+		if(pipe_c == NULL)									// the first one
+			*head = my_pipe;
+		else												// the second or after
+		{
+			while(pipe_c != NULL)
+			{
+				if(pipe_c->counter > num)					// if insert in the first
+				{
+					my_pipe->next = pipe_c;
+					*head = my_pipe;
+					break;
+				}
+				else if(pipe_c->next == NULL)				// if insert in the last
+				{	
+					pipe_c->next = my_pipe;
+					break;
+				}
+				else if(pipe_c->next->counter > num)		// insert from small to big num
+				{
+					my_pipe->next = pipe_c->next;
+					pipe_c->next = my_pipe;
+					break;
+				}
+				pipe_c = pipe_c->next;
+			}
+		}
+		char tmp[1024];
+		int n;
+		string msg;
+		while((n = read(fileno(stdin),tmp,1024)) > 0)
+		{
+			tmp[n] = 0;
+			msg.append(tmp);
+		}
+		write(my_pipe->my_pipe[1],msg.c_str(),msg.length());
+		close(my_pipe->my_pipe[1]);								// must close write, otherwise the read will block
+		//back to origin stdin
+		close(0);
+		dup2(stdin_copy,0);
+	}
+	else														// if the num counter of pipe exist 
+	{
+		char tmp[1024];
+		int n;
+		string msg;
+		while((n = read(my_pipe->my_pipe[0],tmp,1024)) > 0)		// read from pipe first
+		{
+			tmp[n] = 0;
+			msg.append(tmp);
+		}
+		while((n = read(fileno(stdin),tmp,1024)) > 0)			// read from stdin second
+		{
+			tmp[n] = 0;
+			msg.append(tmp);
+		}
+		close(my_pipe->my_pipe[0]);								// close previous pipe read
+		if(pipe(my_pipe->my_pipe) < 0)							// create new pipe
+		{
+			cout << "fail to create pipe" << endl;
+			return;
+		}
+		write(my_pipe->my_pipe[1],msg.c_str(),msg.length());
+		close(my_pipe->my_pipe[1]);								// must close write, otherwise the read will block
+		//back to origin stdin
+		close(0);
+		dup2(stdin_copy,0);
+	}
+	return;
+}
+
+void all_list_add_or_sub(pipe_list **head, bool check)
+{
+	int num = -1;
+	if(check == false)			// check is normal (-1) or not (+1)
+		num = 1;
+	pipe_list *pipe_c = *head;
+	while(pipe_c != NULL)
+	{
+		pipe_c->counter += num;
+		pipe_c = pipe_c->next;
+	}
+}
+
+string handle_cmd(char* cmd, pipe_list **head)
 {
 	char *next_tok = strtok(cmd," \r\n");	// always be next token of cmd token 
 	char *tok_cmd = next_tok;				// record cmd token ex: ls, cat, number
 	string ret_msg ("");					// return message
 	int argc = 0;							// the argc of cmd
 	char **argv;							// the argv of cmd
-	bool next_is_pipe = false;				// whether cmd next is pipe
 	int stdin_copy = dup(0);				// copy origin stdin
+
+	all_list_add_or_sub(head,true);			// when doing new line cmd, all pipe lists counter sub one 
+	bool first_time_do_cmd = true;			// to handle read from pipe counter 0
 
 	while(tok_cmd != NULL)
 	{
@@ -191,12 +327,9 @@ string handle_cmd(char* cmd)
 		else if(strcmp(tok_cmd,"ls") == 0 || strcmp(tok_cmd,"cat") == 0 || strcmp(tok_cmd,"number") == 0 || strcmp(tok_cmd,"removetag") == 0 || strcmp(tok_cmd,"removetag0") == 0 || strcmp(tok_cmd,"noop") == 0)
 		{
 			handle_arg(&argc,&argv,tok_cmd,&next_tok);
-			/*if(next_tok != NULL && (strcmp(next_tok,"|") == 0 || strcmp(next_tok,">") == 0))
-				next_is_pipe = true;
-			else
-				next_is_pipe = false;*/
-			do_cmd(tok_cmd,argv,&ret_msg,next_tok,stdin_copy);
+			do_cmd(tok_cmd,argv,&ret_msg,next_tok,stdin_copy,head,first_time_do_cmd);
 			argc = 0;
+			first_time_do_cmd = false;
 		}
 		else if(strcmp(tok_cmd,"|") == 0)
 		{}
@@ -231,20 +364,49 @@ string handle_cmd(char* cmd)
 			int number = 0;				
 			if(check_num == true)
 				number = atoi(num);
+			else
+			{
+				cout << "Pipe number error!" << endl;
+				break;
+			}
+			do_pipe_N(head,number,stdin_copy);
+			// for debug
+			/*pipe_list *tmp = *head;
+			while(tmp != NULL)
+			{
+				cout << tmp->counter << endl;
+				tmp = tmp->next;
+			}*/
 		}
 		else
 		{
+			all_list_add_or_sub(head,false);
 			string unknown_cmd = tok_cmd;
-			ret_msg = "Unknown command: [" + unknown_cmd + "].\n";
+			ret_msg += "Unknown command: [" + unknown_cmd + "].\n";
 			break;
 		}
 		tok_cmd = next_tok;
 	}
+
+	// clean the pipe which had done
+	if(*head != NULL && (*head)->counter == 0)
+	{
+		close((*head)->my_pipe[0]);
+		pipe_list *tmp = *head;
+		*head = (*head)->next;
+		free(tmp);
+	}
+
 	return ret_msg;
 }
 
 int main(int argc, char *argv[], char *envp[])
 {
+	// initialize directory path
+	if(chdir("./ras") == -1)
+		cout << "Change directory error!" << endl;
+	//cout << get_current_dir_name() << endl;
+
 	// initialize env PATH
 	setenv("PATH","bin:.",1);
 	
@@ -253,6 +415,7 @@ int main(int argc, char *argv[], char *envp[])
 	string send_buff;
 	string welcome_msg = "****************************************\n** Welcome to the information server. **\n****************************************\n% ";
 	char recv_buff[MAXLINE+1];
+	pipe_list *pipe_head = NULL;
 
 	if(argc != 2)
 	{
@@ -309,7 +472,7 @@ int main(int argc, char *argv[], char *envp[])
 			while((n = read(connfd,recv_buff,15000)) > 0)
 			{
 				recv_buff[n] = 0;
-				send_buff = handle_cmd(recv_buff);
+				send_buff = handle_cmd(recv_buff,&pipe_head);
 				if(send_buff.compare("exit") == 0)
 				{
 					close(connfd);
