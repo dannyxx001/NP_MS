@@ -424,6 +424,24 @@ string handle_cmd(char* cmd, pipe_list **head)
 			}
 			else
 				cout << "No argv!" << endl;
+			next_tok = strtok(NULL," \r\n");
+			if(next_tok != NULL && strcmp(next_tok,">") == 0)
+			{
+				next_tok = strtok(NULL," \r\n");
+				// next token is ">" filename
+				if(next_tok != NULL)
+				{
+					ofstream output_file;
+					char *filename = next_tok;
+					output_file.open(filename,ofstream::out);
+					output_file << ret_msg;
+					output_file.close();
+					ret_msg.resize(0);
+					ret_msg.shrink_to_fit();
+				}
+				else
+					cout << "No filename!" << endl;
+			}
 			break;
 		}
 		else if(strcmp(tok_cmd,"setenv") == 0)
