@@ -109,22 +109,18 @@ void handle_arg(int *argc, char ***argv, char *cmd, char **tok)
 
 int convert_to_int(char *next_tok)
 {
-	char *num = strtok(next_tok," !|\r\n");
-	bool check_num = true;
-	for(int i=0;i<strlen(num);i++)
-		if(!isdigit(num[i]))
-			check_num = false;
 	int number = 0;
-	if(check_num == true)
+	for(int i=1;i<5;i++)
 	{
-		number = atoi(num);
-		return number;
+		if(!isdigit(next_tok[i]))
+			break;
+		else
+		{
+			number *= 10;
+			number += (next_tok[i] - '0');
+		}
 	}
-	else
-	{
-		cout << "Pipe number error!" << endl;
-		return -1;
-	}
+	return number;
 }
 
 // do |N or !N
@@ -262,7 +258,7 @@ void do_cmd(char *cmd, char **argv, string *ret_msg, char **next_tok, int stdin_
 			int number = 0;
 			if((*next_tok)[0] == '|') // |N
 			{
-				if((number = convert_to_int(*next_tok)) == -1)
+				if((number = convert_to_int(*next_tok)) == 0)
 				{	
 					cout << "Pipe number error" << endl;
 					return;
@@ -278,21 +274,22 @@ void do_cmd(char *cmd, char **argv, string *ret_msg, char **next_tok, int stdin_
 				dup(pipe_err[0]);	// dup pipe_err read to fileno(stdin)
 				close(pipe_err[0]);	// close pipe_err read
 
-				if(*next_tok != NULL && (*next_tok)[0] =='!') // !N
+				if(*next_tok != NULL && (*next_tok)[0] == '!') // !N
 				{
-					if((number = convert_to_int(*next_tok)) == -1)
+					if((number = convert_to_int(*next_tok)) == 0)
 					{	
 						cout << "Pipe number error" << endl;
 						return;
 					}
 					do_pipe_N(head,number,stdin_copy);
+					*next_tok = strtok(NULL," \r\n");
 				}
 				else				// output stderr
 					(*ret_msg) += do_read(fileno(stdin)); // read from stdin
 			}
 			else					// !N
 			{	
-				if((number = convert_to_int(*next_tok)) == -1)
+				if((number = convert_to_int(*next_tok)) == 0)
 				{	
 					cout << "Pipe number error" << endl;
 					return;
@@ -310,12 +307,13 @@ void do_cmd(char *cmd, char **argv, string *ret_msg, char **next_tok, int stdin_
 
 				if(*next_tok != NULL && (*next_tok)[0] =='|') // |N
 				{
-					if((number = convert_to_int(*next_tok)) == -1)
+					if((number = convert_to_int(*next_tok)) == 0)
 					{	
 						cout << "Pipe number error" << endl;
 						return;
 					}
 					do_pipe_N(head,number,stdin_copy);
+					*next_tok = strtok(NULL," \r\n");
 				}
 				else				// output stdout
 					(*ret_msg) += do_read(fileno(stdin)); // read from stdin
