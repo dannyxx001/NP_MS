@@ -544,7 +544,6 @@ int main(int argc, char *argv[], char *envp[])
 	}
 
 	int child_pid;
-	signal(SIGCHLD,sig_chld);
 	
 	while(true)
 	{
@@ -581,6 +580,8 @@ int main(int argc, char *argv[], char *envp[])
 		{
 			cout << "(parent) the listen pid: " << getpid() << endl;
 			close(connfd);
+			// signal must call in parent, otherwise if child process call fork again then it will catch wrong signal
+			signal(SIGCHLD,sig_chld);
 		}
 		else					// fork fail
 			cout << "fail to fork" << endl;

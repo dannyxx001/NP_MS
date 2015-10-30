@@ -65,6 +65,7 @@ int main(int argc,char *argv[])
  sleep(1);     //waiting for welcome messages
  
  end=0;
+ int count=1;
  while(1)
  { 
   FD_ZERO(&readfds);
@@ -85,8 +86,10 @@ int main(int argc,char *argv[])
   	msg_buf[len] = 10;
   	
   	msg_buf[len+1] = '\0';
+  	//printf("%d",count);
  	printf("%s",msg_buf);
   	fflush(stdout);
+  	//count = count + 1;
   	if(write(client_fd,msg_buf,len+1) == -1) return -1;
 
 	/*if(!strncmp(msg_buf,"exit",4))
