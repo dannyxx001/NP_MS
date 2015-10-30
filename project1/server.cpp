@@ -15,7 +15,8 @@
 #include <fcntl.h>
 #include <string>
 #include <fstream>
-#define MAXLINE 15000
+#include <signal.h>
+#define MAXLINE 4096
 #define LISTENNQ 10
 using namespace std;
 
@@ -51,6 +52,20 @@ bool is_end_of_cmd(char *tok)
 		return false;
 }
 
+// read from file descriptor
+string do_read(int fd)
+{
+	char tmp[MAXLINE+1];
+	int n;
+	string msg = ("");
+	while((n = read(fd,tmp,MAXLINE)) > 0)
+	{
+		tmp[n] = 0;
+		msg.append(tmp);
+	}
+	return msg;
+}
+
 // handle arg of one cmd
 void handle_arg(int *argc, char ***argv, char *cmd, char **tok)
 {
@@ -62,24 +77,29 @@ void handle_arg(int *argc, char ***argv, char *cmd, char **tok)
 		*argc += 1;
 		tmp_c->arg = *tok;
 		// next token
-		arg_list *tmp_n = (arg_list*)malloc(sizeof(arg_list));
-		tmp_c->next = tmp_n;
-		tmp_c = tmp_n;
-		*tok = strtok(NULL," \r\n");
+		if((*tok = strtok(NULL," \r\n")) != NULL)
+		{
+			arg_list *tmp_n = (arg_list*)malloc(sizeof(arg_list));
+			tmp_c->next = tmp_n;
+			tmp_c = tmp_n;
+		}
+		else
+			tmp_c->next = NULL;
 	}
-	// argv include cmd, arg of cmd, NULL
 	//cout << *argc+2 << endl; // use for debug
+
+	// argv include cmd, arg of cmd, NULL
 	*argv = (char **)malloc(*argc+1);
 	(*argv)[0] = (char *)malloc(sizeof(cmd));
 	strcpy((*argv)[0],cmd);
 	//cout << (*argv)[0] << endl; // use for debug
+	
 	tmp_c = head;
 	for(int i=1;i<*argc+1;i++)
 	{
 		arg_list *tmp_n = tmp_c->next;
 		(*argv)[i] = (char *)malloc(sizeof(tmp_c->arg));
 		strcpy((*argv)[i],tmp_c->arg);
-		//cout << (*argv)[i] << endl; // use for debug
 		free(tmp_c);
 		tmp_c = tmp_n;
 	}
@@ -117,7 +137,8 @@ void do_pipe_N(pipe_list **head, int num, int stdin_copy)
 			break;
 		my_pipe = my_pipe->next;
 	}
-	if(my_pipe == NULL)										// if the num counter of pipe not exist 
+	string msg = ("");
+	if(my_pipe == NULL)											// if the num counter of pipe not exist 
 	{
 		my_pipe = (pipe_list*)malloc(sizeof(pipe_list));
 		my_pipe->counter = num;
@@ -128,24 +149,24 @@ void do_pipe_N(pipe_list **head, int num, int stdin_copy)
 			return;
 		}
 		pipe_list *pipe_c = *head;
-		if(pipe_c == NULL)									// the first one
+		if(pipe_c == NULL)										// the first one
 			*head = my_pipe;
-		else												// the second or after
+		else													// the second or after
 		{
 			while(pipe_c != NULL)
 			{
-				if(pipe_c->counter > num)					// if insert in the first
+				if(pipe_c->counter > num)						// if insert in the first
 				{
 					my_pipe->next = pipe_c;
 					*head = my_pipe;
 					break;
 				}
-				else if(pipe_c->next == NULL)				// if insert in the last
+				else if(pipe_c->next == NULL)					// if insert in the last
 				{	
 					pipe_c->next = my_pipe;
 					break;
 				}
-				else if(pipe_c->next->counter > num)		// insert from small to big num
+				else if(pipe_c->next->counter > num)			// insert from small to big num
 				{
 					my_pipe->next = pipe_c->next;
 					pipe_c->next = my_pipe;
@@ -154,36 +175,15 @@ void do_pipe_N(pipe_list **head, int num, int stdin_copy)
 				pipe_c = pipe_c->next;
 			}
 		}
-		char tmp[1024];
-		int n;
-		string msg;
-		while((n = read(fileno(stdin),tmp,1024)) > 0)
-		{
-			tmp[n] = 0;
-			msg.append(tmp);
-		}
+		msg += do_read(fileno(stdin));							// read from stdin
 		write(my_pipe->my_pipe[1],msg.c_str(),msg.length());
-		close(my_pipe->my_pipe[1]);								// must close write, otherwise the read will block
-		//back to origin stdin
-		close(0);
-		dup2(stdin_copy,0);
+		close(my_pipe->my_pipe[1]);								// must close write, otherwise the read will block	
 	}
 	else														// if the num counter of pipe exist 
 	{
-		char tmp[1024];
-		int n;
-		string msg;
-		while((n = read(my_pipe->my_pipe[0],tmp,1024)) > 0)		// read from pipe first
-		{
-			tmp[n] = 0;
-			msg.append(tmp);
-		}
+		msg += do_read(my_pipe->my_pipe[0]);					// read from previous pipe first
 		close(my_pipe->my_pipe[0]);								// close previous pipe read
-		while((n = read(fileno(stdin),tmp,1024)) > 0)			// read from stdin second
-		{
-			tmp[n] = 0;
-			msg.append(tmp);
-		}
+		msg += do_read(fileno(stdin));							// read from stdin second
 		if(pipe(my_pipe->my_pipe) < 0)							// create new pipe
 		{
 			cout << "fail to create pipe" << endl;
@@ -191,10 +191,13 @@ void do_pipe_N(pipe_list **head, int num, int stdin_copy)
 		}
 		write(my_pipe->my_pipe[1],msg.c_str(),msg.length());
 		close(my_pipe->my_pipe[1]);								// must close write, otherwise the read will block
-		//back to origin stdin
-		close(0);
-		dup2(stdin_copy,0);
 	}
+	//back to origin stdin
+	close(0);
+	dup2(stdin_copy,0);
+	// release msg memmory
+	msg.resize(0);
+	msg.shrink_to_fit();
 	return;
 }
 
@@ -209,7 +212,7 @@ void do_cmd(char *cmd, char **argv, string *ret_msg, char **next_tok, int stdin_
 	}
 
 	int pipe_out[2];				// use for pipe stdout
-	int pipe_err[2];				// use for pipe stderr
+	int pipe_err[2];				// use for pipe stderr	
 	if(pipe(pipe_out) < 0 || pipe(pipe_err) < 0)
 	{
 		cout << "fail to create pipe out or err" << endl;
@@ -253,7 +256,6 @@ void do_cmd(char *cmd, char **argv, string *ret_msg, char **next_tok, int stdin_
 		while((pid = wait(&stat)) != child_pid); // block
 		//cout << "The cmd pid: " << pid << " connection terminated\n" << endl; // use for debug
 
-		// use flag to record |N and !N
 		// if next_tok is |N or !N
 		if(*next_tok != NULL && strcmp(*next_tok,"|") != 0 && strcmp(*next_tok,">") != 0 && ((*next_tok)[0] == '|' || (*next_tok)[0] =='!'))
 		{
@@ -286,18 +288,9 @@ void do_cmd(char *cmd, char **argv, string *ret_msg, char **next_tok, int stdin_
 					do_pipe_N(head,number,stdin_copy);
 				}
 				else				// output stderr
-				{
-					char tmp[1024];
-					int n;
-					// read from stdin
-					while((n = read(fileno(stdin),tmp,1024)) > 0)
-					{
-						tmp[n] = 0;
-						(*ret_msg).append(tmp);
-					}
-				}
+					(*ret_msg) += do_read(fileno(stdin)); // read from stdin
 			}
-			else
+			else					// !N
 			{	
 				if((number = convert_to_int(*next_tok)) == -1)
 				{	
@@ -315,7 +308,7 @@ void do_cmd(char *cmd, char **argv, string *ret_msg, char **next_tok, int stdin_
 				dup(pipe_out[0]);	// dup pipe_out read to fileno(stdin)
 				close(pipe_out[0]);	// close pipe_out read
 
-				if(*next_tok != NULL && (*next_tok)[0] =='|')
+				if(*next_tok != NULL && (*next_tok)[0] =='|') // |N
 				{
 					if((number = convert_to_int(*next_tok)) == -1)
 					{	
@@ -325,16 +318,7 @@ void do_cmd(char *cmd, char **argv, string *ret_msg, char **next_tok, int stdin_
 					do_pipe_N(head,number,stdin_copy);
 				}
 				else				// output stdout
-				{
-					char tmp[1024];
-					int n;
-					// read from stdin
-					while((n = read(fileno(stdin),tmp,1024)) > 0)
-					{
-						tmp[n] = 0;
-						(*ret_msg).append(tmp);
-					}
-				}
+					(*ret_msg) += do_read(fileno(stdin)); // read from stdin
 			}
 			return;
 		}
@@ -343,14 +327,8 @@ void do_cmd(char *cmd, char **argv, string *ret_msg, char **next_tok, int stdin_
 		dup(pipe_err[0]);			// dup pipe_err read to fileno(stdin)
 		close(pipe_err[0]);			// close pipe_err read
 
-		char tmp[1024];
-		int n;
 		// read from stderr first
-		while((n = read(fileno(stdin),tmp,1024)) > 0)
-		{
-			tmp[n] = 0;
-			(*ret_msg).append(tmp);
-		}
+		(*ret_msg) += do_read(fileno(stdin));
 
 		close(0);					// close stdin
 		dup(pipe_out[0]);			// dup pipe_out read to fileno(stdin)
@@ -373,31 +351,21 @@ void do_cmd(char *cmd, char **argv, string *ret_msg, char **next_tok, int stdin_
 				ofstream output_file;
 				char *filename = *next_tok;
 				output_file.open(filename,ofstream::out);
-				char tmp[1024];
-				int n;
-				string file_msg;
-				while((n = read(fileno(stdin),tmp,1024)) > 0)
-				{
-					tmp[n] = 0;
-					file_msg.append(tmp);
-				}
+				string file_msg = do_read(fileno(stdin));
 				output_file << file_msg;
+				file_msg.resize(0);
+				file_msg.shrink_to_fit();
 				output_file.close();
 				*next_tok = strtok(NULL," \r\n");
 			}
 			else
-			{
 				cout << "No filename!" << endl;
-			}
 			return;
 		}
 
 		// read from stdout second
-		while((n = read(fileno(stdin),tmp,1024)) > 0)
-		{
-			tmp[n] = 0;
-			(*ret_msg).append(tmp);
-		}
+		(*ret_msg) += do_read(fileno(stdin));
+
 		//back to origin stdin
 		close(0);
 		dup2(stdin_copy,0);
@@ -453,8 +421,10 @@ string handle_cmd(char* cmd, pipe_list **head)
 				if(getenv(next_tok) != NULL)
 					ret_msg.append(getenv(next_tok));
 				ret_msg += "\n";
-				break;
 			}
+			else
+				cout << "No argv!" << endl;
+			break;
 		}
 		else if(strcmp(tok_cmd,"setenv") == 0)
 		{
@@ -462,6 +432,8 @@ string handle_cmd(char* cmd, pipe_list **head)
 			next_tok = strtok(NULL," \r\n");
 			if(env != NULL && next_tok != NULL)
 				setenv(env,next_tok,1);
+			else
+				cout << "No argv!" << endl;
 			break;
 		}
 		else if(strcmp(tok_cmd,"ls") == 0 || strcmp(tok_cmd,"cat") == 0 || strcmp(tok_cmd,"number") == 0 || strcmp(tok_cmd,"removetag") == 0 || strcmp(tok_cmd,"removetag0") == 0 || strcmp(tok_cmd,"noop") == 0)
@@ -476,6 +448,9 @@ string handle_cmd(char* cmd, pipe_list **head)
 			all_list_add_or_sub(head,false);
 			string unknown_cmd = tok_cmd;
 			ret_msg += "Unknown command: [" + unknown_cmd + "].\n";
+			// only pipe can't pass unknow command
+			close(0);
+			dup2(stdin_copy,0);
 			break;
 		}
 		tok_cmd = next_tok;
@@ -498,7 +473,7 @@ int main(int argc, char *argv[], char *envp[])
 	// initialize directory path
 	if(chdir("./ras") == -1)
 		cout << "Change directory error!" << endl;
-	//cout << get_current_dir_name() << endl;
+	//cout << get_current_dir_name() << endl; // for debug
 
 	// initialize env PATH
 	setenv("PATH","bin:.",1);
@@ -507,7 +482,8 @@ int main(int argc, char *argv[], char *envp[])
 	struct sockaddr_in servaddr;
 	string send_buff;
 	string welcome_msg = "****************************************\n** Welcome to the information server. **\n****************************************\n% ";
-	char recv_buff[MAXLINE+1];
+	string recv_buff;
+	char tmp[MAXLINE+1];
 	pipe_list *pipe_head = NULL;
 
 	if(argc != 2)
@@ -561,17 +537,34 @@ int main(int argc, char *argv[], char *envp[])
 			close(listenfd);
 			send_buff.assign(welcome_msg);
 			write(connfd,send_buff.c_str(),send_buff.length());
-			while((n = read(connfd,recv_buff,15000)) > 0)
+			while(true)
 			{
-				recv_buff[n] = 0;
-				send_buff = handle_cmd(recv_buff,&pipe_head);
+				recv_buff.resize(0);
+				recv_buff.shrink_to_fit();
+				while((n = read(connfd,tmp,MAXLINE)) > 0)
+				{
+					recv_buff.append(tmp,n);
+					if(tmp[n-1] != '\n')
+				    	continue;
+					else
+					{
+						tmp[0] = 0;
+				    	recv_buff.append(tmp,1);
+				    	break;
+					}
+				}
+				//cout << recv_buff << endl;            // for debug
+				//cout << recv_buff.length() << endl;   // for debug
+
+				send_buff.resize(0);
+				send_buff.shrink_to_fit();
+				send_buff = handle_cmd((char *)recv_buff.c_str(),&pipe_head);
 				if(send_buff.compare("exit") == 0)
 				{
 					close(connfd);
 					break;
 				}
 				send_buff.append("% ");
-				//cout << send_buff << endl;
 				write(connfd,send_buff.c_str(),send_buff.length());
 			}
 			exit(0);
