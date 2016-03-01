@@ -1,0 +1,24 @@
+****************************************
+** Welcome to the information server. **
+****************************************
+% printenv PATH
+PATH=bin:.
+% ls
+bin
+test.html
+% setenv PATH .
+% printenv PATH
+PATH=.
+% ls
+Unknown command: [ls].
+% setenv PATH bin
+% ls bin
+cat
+ls
+noop
+number
+removetag
+removetag0
+% date
+Unknown command: [date].
+% exit

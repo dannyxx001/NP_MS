@@ -452,7 +452,7 @@ string handle_cmd(char* cmd, pipe_list **head)
 				cout << "No argv!" << endl;
 			break;
 		}
-		else if(strcmp(tok_cmd,"ls") == 0 || strcmp(tok_cmd,"cat") == 0 || strcmp(tok_cmd,"number") == 0 || strcmp(tok_cmd,"removetag") == 0 || strcmp(tok_cmd,"removetag0") == 0 || strcmp(tok_cmd,"noop") == 0)
+		else if(strcmp(tok_cmd,"ls") == 0 || strcmp(tok_cmd,"cat") == 0 || strcmp(tok_cmd,"number") == 0 || strcmp(tok_cmd,"removetag") == 0 || strcmp(tok_cmd,"removetag0") == 0 || strcmp(tok_cmd,"noop") == 0 || strcmp(tok_cmd,"date") == 0 || strcmp(tok_cmd,"delayedremovetag") == 0)
 		{
 			handle_arg(&argc,&argv,tok_cmd,&next_tok);
 			do_cmd(tok_cmd,argv,&ret_msg,&next_tok,stdin_copy,head,first_time_do_cmd);
@@ -555,8 +555,7 @@ int main(int argc, char *argv[], char *envp[])
 			write(connfd,send_buff.c_str(),send_buff.length());
 			while(true)
 			{
-				recv_buff.resize(0);
-				recv_buff.shrink_to_fit();
+				recv_buff = "";
 				while((n = read(connfd,tmp,MAXLINE)) > 0)
 				{
 					recv_buff.append(tmp,n);
@@ -572,8 +571,7 @@ int main(int argc, char *argv[], char *envp[])
 				//cout << recv_buff << endl;            // for debug
 				//cout << recv_buff.length() << endl;   // for debug
 
-				send_buff.resize(0);
-				send_buff.shrink_to_fit();
+				send_buff = "";
 				send_buff = handle_cmd((char *)recv_buff.c_str(),&pipe_head);
 				if(send_buff.compare("exit") == 0)
 				{

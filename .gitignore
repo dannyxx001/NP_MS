@@ -19,7 +19,9 @@
 
 *.pdf
 
-*.zip
+*.cgi
+
+#*.zip
 
 # txt file
-.txt
+#.txt
